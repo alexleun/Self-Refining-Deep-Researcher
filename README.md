@@ -1,101 +1,110 @@
-## 1. Executive Summary
+# Self‑Refining Deep Researcher
 
-This project has evolved from a standard conversational interface into an **Autonomous Recursive Research Engine**. 
-
-While traditional RAG (Retrieval-Augmented Generation) systems perform a linear "Search $\to$ Answer" process, this project implements a **Self-Refining Loop**. It treats the Large Language Model (LLM) not as a chatbot, but as a central processing unit that assumes multiple distinct roles (Planner, Researcher, Auditor, Editor) to iteratively improve the quality of an output before the user ever sees it.
-
-The primary goal is to achieve high-fidelity, hallucination-resistant research reports running entirely on local hardware (LM Studio + SearXNG) without relying on external cloud APIs.
+A modular, multi‑agent framework for **iterative research and report generation**.  
+This project orchestrates specialized roles (Planner, Collector, Researcher, Editor, Auditor, Integrator, Finalizer) to transform a user query into a structured, evidence‑backed, polished report.
 
 ---
 
-## 2. Architectural Achievements
+## ✨ Features
+- **Intent Analysis**: interpret user query into goals, scope, and constraints.
+- **Planner**: generate section/topic plan with search queries and acceptance criteria.
+- **Collector**: perform quick evidence retrieval from the web.
+- **Researcher (NEW)**: conduct deep, targeted searches for richer evidence and provenance.
+- **Editor**: draft section content using collected evidence.
+- **Auditor**: score drafts for factuality, clarity, and citation coverage.
+- **Integrator**: merge drafts into an executive summary and full report.
+- **Finalizer**: polish the report into professional or wiki style.
+- **Iteration History**: track rounds, scores, and improvements in `iteration_history.json`.
+- **Resume Support**: continue unfinished projects from saved state.
 
-The core innovation of this project is the transition from a linear chain to a state-based loop. The system currently implements the following architecture:
+---
 
-### 2.1 The Multi-Agent Swarm
-Instead of a single system prompt, the orchestrator dynamically swaps context to simulate a team of experts:
-
-1.  **The Planner:** Analyzes the user's abstract request and breaks it down into concrete, searchable queries.
-2.  **The Collector (Tool User):** Interfaces with a local SearXNG instance to scrape, read, and summarize real-time web data.
-3.  **The Editor:** Synthesizes the collected evidence into a coherent draft.
-4.  **The Auditor (The Critic):** The most critical component. It reads the draft, compares it against the evidence, and assigns a quality score. **If the score is low, it rejects the draft and triggers a new search loop.**
-
-### 2.2 The Refinement Loop (The "Self-Correction" Mechanism)
-I have successfully implemented a feedback loop that mimics human revision:
-
-```mermaid
-graph TD
-    A[User Request] --> B(Planner Agent)
-    B --> C{Search Strategy}
-    C --> D[Collector Agent / SearXNG]
-    D --> E[Evidence Pool]
-    E --> F[Editor Agent writes Draft]
-    F --> G(Auditor Agent Reviews)
-    G -- "Score < 7/10" --> H[Feedback Generation]
-    H --> B
-    G -- "Score >= 7/10" --> I[Final Report Output]
+## 📂 Project Structure
+```
+main.py              # CLI entrypoint for fresh runs
+resume.py            # CLI entrypoint for resuming projects
+orchestrator.py      # Lifecycle controller
+roles/
+  ├─ auditor.py
+  ├─ collector.py
+  ├─ critical.py
+  ├─ decomposer.py
+  ├─ editor.py
+  ├─ finalizer.py
+  ├─ fulfillment.py
+  ├─ integrator.py
+  ├─ interpreter.py
+  ├─ llm_interface.py
+  ├─ planner.py
+  ├─ specialist.py
+  └─ researcher.py   # NEW deep research roles
+data/
+  ├─ evidence/       # JSON evidence files
+  ├─ sections/       # Drafts per section per round
+  ├─ iteration_history.json
+  └─ project_manifest.json
+utils/
+  ├─ config.py
+  ├─ helpers.py
+  ├─ llm_interface.py
+  ├─ logging_utils.py
+  ├─ normalizer.py
+  ├─ pdf_hander.py
+  ├─ persistence.py
+  ├─ logging_utils.py
+  ├─ normalizer.py
+  ├─ persistence.py
+  ├─ prompt_compressor.py
+  ├─ search_engine.py
+  ├─ section_runner.py
+  ├─ test_langchain_pipline.py
+  └─ token_counter.py
 ```
 
-### 2.3 Evidence Management
-*   **Dynamic Context Injection:** The system maintains a growing `evidence_pool.json`.
-*   **Source Tracking:** Every claim in the final output is traceable back to a specific URL retrieved during the collection phase.
+---
+
+## 🚀 Workflow
+1. **Analyze Query** → extract intent, scope, language, style.
+2. **Plan Sections** → generate `plan.json` with topics and queries.
+3. **Collect Evidence** → quick retrieval of shallow sources.
+4. **Deep Research** → researcher adds targeted, high‑quality evidence.
+5. **Draft Sections** → editor writes drafts with citations.
+6. **Audit Drafts** → auditor scores and suggests improvements.
+7. **Iterate Rounds** → orchestrator loops until quality threshold or max rounds.
+8. **Integrate & Finalize** → best round selected, executive summary + final report produced.
 
 ---
 
-## 3. Current Capabilities (What Works)
-
-As of the current build, the system demonstrates the following capabilities:
-
-*   **Autonomous Error Correction:** If the Collector finds irrelevant data, the Auditor catches it, and the Planner rewrites the search terms automatically.
-*   **Privacy-First Architecture:** The entire stack runs offline (air-gapped capable), ensuring no data leaks to OpenAI or Anthropic.
-*   **Structured Output:** The system moves beyond chat bubbles, generating comprehensive Markdown files (`final_report.md`) suitable for professional use.
-*   **Tool Use:** Successful integration with SearXNG for real-time web access.
-
----
-
-## 4. Technical Challenges & Solutions
-
-### Challenge 1: The "Yes-Man" Problem
-*   **Issue:** Smaller local models (7B/8B parameters) tend to be too agreeable when acting as Auditors, approving bad drafts.
-*   **Solution:** I implemented "Chain of Thought" prompting for the Auditor, forcing it to list *negative* aspects before assigning a score. This significantly improved critique quality.
-
-### Challenge 2: Context Window Saturation
-*   **Issue:** After 3 loops of research, the accumulated text exceeded the 8k/32k context window of local models.
-*   **Solution:** Implemented an intermediate "Summarizer" step. Raw HTML is compressed into semantic bullet points before being added to the Evidence Pool.
-
----
-
-## 5. Roadmap & Next Steps
-
-This report marks the completion of the core logic. The next phase of development focuses on optimization:
-
-1.  **Memory Persistence:** Allow the agents to read previous reports to answer follow-up questions without re-doing research.
-2.  **Parallel Execution:** Currently, searches happen sequentially. I plan to implement `async` processing to allow the Collector to scrape multiple sites simultaneously.
-3.  **UI Overhaul:** Transitioning from a chat interface to a "Dashboard" view, where users can see the agents "thinking" and view the progress of the research loop in real-time.
-
----
-
-## Appendix: Reproduction Steps
-
-To replicate the current research results locally:
-
-**Prerequisites:**
-*   [LM Studio](https://lmstudio.ai/) (Running a server on port 1234)
-*   [SearXNG](https://github.com/searxng/searxng) (Running locally via Docker)
-*   Python 3.10+
-
-**Installation:**
+## ⚙️ Usage
+Run a new project:
 ```bash
-git clone https://github.com/alexleun/Self-Refining-LLM-Chat.git
-cd Self-Refining-LLM-Chat
-pip install -r requirements.txt
+python main.py --query "Impacts of negative Arctic oscillation" --style standard --lang "English" --max-rounds 5 --max-tokens 20000
 ```
 
-**Configuration:**
-Edit `config.yaml` to point to your local model and search instance.
-
-**Execution:**
+Resume an existing project:
 ```bash
-python main.py
+python resume.py --project negative_arctic_oscillation_20260124_183224 --lang "Traditional Chinese" --max-rounds 5 --max-tokens 12791
 ```
-```
+
+---
+
+## 📑 Output Artifacts
+- `executive_summary.md` — concise overview.
+- `draft_final_report.md` — integrated draft.
+- `final_report.md` — polished professional or wiki‑style report.
+- `iteration_history.json` — record of rounds, scores, and improvements.
+- `evidence/*.json` — raw evidence with provenance metadata.
+
+---
+
+## 🛠️ Roadmap
+- [ ] Add Researcher role for deep evidence.
+- [x] Support wiki‑style report formatting.
+- [ ] Enhance resume to continue missing rounds seamlessly.
+- [ ] Add provenance mapping (claims → sources).
+- [x] Expand auditor scoring schema.
+
+---
+
+
+Would you like me to also draft that **ARCHITECTURE.md** file, summarizing the internal design (roles, orchestrator, resume logic) so contributors have a deeper technical reference separate from the README?
