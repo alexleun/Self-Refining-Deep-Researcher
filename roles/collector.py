@@ -78,37 +78,66 @@ class Collector:
                         logging.warning(f"Failed to ingest local file: {path} :: {e}")
         return docs
         
-    def collect(self, user_query: str, limit=15, deep_visit=True, local_dir=None, max_tokens=None):
-            # Step 1: run searx search
-            #results = self.search_engine.search(user_query, limit=4)
-            limit = min(self.limit, limit)
-            results = self.searx_search(user_query, limit)
+    def collect(self, user_query: str, limit=15, deep_visit=True, local_dir=None, max_tokens=None, researcher=None, min_required=10):
+        limit = min(self.limit, limit)
+        results = self.searx_search(user_query, limit)
 
-            enriched = []
-            for r in results:
-                url = r.get("url", "")
-                if url and url.lower().endswith(".pdf"):
-                    # PDF handling → split into chunks
-                    pdf_chunks = fetch_and_split_pdf(url, self.project_id)
-                    enriched.extend(pdf_chunks)
-                else:
-                    # Normal HTML handling
-                    if deep_visit and url:
-                        text = self.search_engine.fetch_deep(url)
-                        if text:
-                            r["snippet"] = text[:1200]
+        enriched = []
+        seen_hashes = set()
 
-                    # compress + hash
-                    snippet = r.get("snippet", "")
-                    max_words = 1000 if len(snippet.split()) > 1200 else 800
-                    r["compressed"] = self.compress_semantic(snippet, max_words=max_words, max_tokens=max_tokens)
+        for r in results:
+            url = r.get("url", "")
+            snippet = r.get("snippet", "") or ""
+
+            if "Error fetching" in snippet or snippet.strip() == "":
+                continue
+
+            if url and url.lower().endswith(".pdf"):
+                pdf_chunks = fetch_and_split_pdf(url, self.project_id)
+                enriched.extend(pdf_chunks)
+                continue
+
+            if deep_visit and url:
+                text = self.search_engine.fetch_deep(url)
+                if text:
+                    snippet = text[:1200]
+                    r["snippet"] = snippet
+
+            max_words = 1000 if len(snippet.split()) > 1200 else 800
+            r["compressed"] = self.compress_semantic(snippet, max_words=max_words, max_tokens=max_tokens)
+            r["hash"] = file_hash(r["compressed"])
+            r["source_type"] = "html"
+
+            if len(r["compressed"]) < 200 or r["hash"] in seen_hashes:
+                continue
+
+            seen_hashes.add(r["hash"])
+            enriched.append(r)
+
+        # ✅ Adaptive re-query if too few items
+        if len(enriched) < min_required:
+            logging.info(f"[Collector] Evidence count low ({len(enriched)}). Broadening search...")
+            extra_results = self.searx_search(user_query + " overview", limit=20)
+            for r in extra_results:
+                if r.get("snippet"):
+                    r["compressed"] = r["snippet"][:800]
                     r["hash"] = file_hash(r["compressed"])
-                    r["source_type"] = "html"
+                    if r["hash"] not in seen_hashes:
+                        enriched.append(r)
+                        seen_hashes.add(r["hash"])
+
+        # ✅ Researcher fallback if still too few
+        if researcher and len(enriched) < min_required:
+            logging.info(f"[Collector] Still low evidence ({len(enriched)}). Calling Researcher...")
+            deep_ev = researcher.deep_search({"title": user_query}, user_query)
+            for r in deep_ev:
+                if r["hash"] not in seen_hashes:
                     enriched.append(r)
+                    seen_hashes.add(r["hash"])
 
-            # Step 2: local evidence ingestion
-            if local_dir and os.path.isdir(local_dir):
-                enriched.extend(self.ingest_local_files(local_dir))
+        # Local evidence ingestion
+        if local_dir and os.path.isdir(local_dir):
+            enriched.extend(self.ingest_local_files(local_dir))
 
-            return enriched
+        return enriched
 

@@ -27,24 +27,18 @@ class LLMInterface:
     def __init__(self, tokens: TokenCounter, default_max=None):
         self.tokens = tokens
         self.default_max = default_max or LLM_CFG.max_tokens
-        # self.model_max = 131072
         self.model_max = LLM_CFG.max_tokens
         self.compressor = PromptCompressor(self, tokens, model_max=self.model_max)
-
-
-        # logging.info(f"LLMInterface initialized with tokens={type(tokens)}")
+        self.api_key = getattr(LLM_CFG, "api_key", None)  # ✅ load from config
+        self.model = getattr(LLM_CFG, "model", None)
 
     def query(self, prompt: str, role: str, max_tokens=None, retries: int = 2, backoff: float = 0.75) -> str:
-        # pick user override or default
         requested_max = LLM_CFG.max_tokens or self.default_max
-        # enforce ceiling
         effective_max = min(requested_max, self.model_max)
         safe_prompt = self.compressor.compress_if_needed(prompt, role)
 
-
         n_tokens = self.tokens.count(safe_prompt)
-        reserve_for_completion = int(effective_max * 0.1)  # leave 10% for response
-        # max_prompt = effective_max - reserve_for_completion
+        reserve_for_completion = int(effective_max * 0.1)
         max_prompt = self.model_max - reserve_for_completion
 
         if n_tokens > max_prompt:
@@ -53,23 +47,24 @@ class LLMInterface:
             safe_prompt = " ".join(words[:max_prompt])
 
         payload = {
+            "model": self.model,
             "messages": [{"role": "user", "content": safe_prompt}],
             "temperature": ROLE_TEMPS.get(role, 0.7),
             "max_tokens": reserve_for_completion,
         }
 
+        headers = {"Content-Type": "application/json"}
+        if self.api_key and self.api_key != "not-needed":
+            headers["Authorization"] = f"Bearer {self.api_key}"  # ✅ add API key
 
         for attempt in range(retries + 1):
             try:
-                r = requests.post(LM_STUDIO_URL, json=payload, timeout=LLM_CFG.timeout)
+                r = requests.post(LM_STUDIO_URL, headers=headers, json=payload, timeout=LLM_CFG.timeout)
                 data = r.json()
 
-                # --- Usage logging ---
                 if "usage" in data:
                     self.tokens.add(role, data["usage"])
-                    # logging.info(f"[LLMInterface] role={role} usage={data['usage']}")
 
-                # --- Response extraction ---
                 if "choices" in data and data["choices"]:
                     m = data["choices"][0].get("message", {})
                     if m and "content" in m:

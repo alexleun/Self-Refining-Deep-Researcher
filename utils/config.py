@@ -1,6 +1,10 @@
 # utils/config.py
 
 class LLMConfig:
+    max_tokens = 131072
+    timeout = 60
+    api_key = "sk-lm-wwC9WEfQ:62DpAHysKwAijvWAqHgK"  # <- your api key here
+    model = "openai/gpt-oss-20b"
     def __init__(self, max_tokens: int = 131072, timeout: int = 1200):
         self.max_tokens = max_tokens
         self.timeout = timeout
@@ -10,6 +14,7 @@ LLM_CFG = LLMConfig()
 
 LM_STUDIO_URL = "http://localhost:1234/v1/chat/completions"
 SEARX_URL = "http://localhost:8888/search"
+
 
 ROLE_TEMPS = {
     "planner": 0.4,
@@ -121,9 +126,6 @@ ROLE_PROMPTS = {
         "- Do not include executive summaries or conclusions outside the assigned sections.\n"
         "- Ensure smooth flow between sections, but keep each section self‑contained.\n"
         "- Preserve citations and references inline.\n"
-        # "- Write in {language_hint}.\n\n"
-        # "Sections to integrate:\n{sections}\n\n"
-        # "Executive summary:\n{executive_summary}\n"
     ),
 
     "integrate_summary": (
@@ -167,6 +169,26 @@ ROLE_PROMPTS = {
         "- At the end, add a short 'Notes on changes' section in wiki style.\n"
         "- Write in {language_hint}.\n\n"
         "Input report chunk:\n{chunk}\n\n"
-    )
-    
+    ),
+        "researcher": """
+        You are the Researcher role in a multi-agent deep research pipeline.
+
+        Your tasks:
+        1. Refine search queries for deeper evidence collection.
+           - Use section title, user query, audit feedback, and critical questions.
+           - Generate 2–3 focused queries that target missing information or gaps.
+           - Queries should be concise, factual, and suitable for web search.
+
+        2. Summarize or compress evidence snippets.
+           - Rewrite long text into a clear, concise summary.
+           - Preserve factual details, citations, and technical terms.
+           - Avoid repetition, filler, or vague language.
+           - Keep summaries under ~200 words.
+
+        Guidelines:
+        - Always aim for clarity and factual accuracy.
+        - Highlight key points that support the section’s topic.
+        - Do not invent information; only rephrase or condense.
+        - Output should be plain text, suitable for downstream Editor and Auditor.
+            """,
 }
