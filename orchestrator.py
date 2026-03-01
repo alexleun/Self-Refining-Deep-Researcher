@@ -196,24 +196,32 @@ class Orchestrator:
         Resume an interrupted orchestration run.
         - Load plan.json from project_dir
         - Load evidence JSON files
-        - Detect completed section drafts in sections/ folder
-        - Continue remaining rounds until max_rounds
+        - Load iteration history if available
+        - Continue remaining rounds until max_rounds or quality threshold
         """
+
         # Load iteration history
         history_path = os.path.join(project_dir, "iteration_history.json")
         iteration_history = []
+        last_round = 0
         if os.path.isfile(history_path):
             with open(history_path, "r", encoding="utf-8") as f:
                 iteration_history = json.load(f)
+            if iteration_history:
+                last_round = iteration_history[-1]["round"]
             logging.info("[Resume] Loaded iteration history with %d rounds", len(iteration_history))
         else:
             logging.warning("[Resume] No iteration_history.json found, starting fresh")
+
         self.max_tokens = max_tokens or LLM_CFG.max_tokens
+
+        # Load plan
         plan_path = os.path.join(project_dir, "plan.json")
         if not os.path.isfile(plan_path):
             raise RuntimeError(f"plan.json not found in {project_dir}")
         with open(plan_path, "r", encoding="utf-8") as f:
             plan = json.load(f)
+
         # Load evidence pool
         evidence_dir = os.path.join(project_dir, "evidence")
         evidence_files = glob.glob(os.path.join(evidence_dir, "*.json"))
@@ -224,9 +232,10 @@ class Orchestrator:
                     cumulative_sources.append(json.load(f))
             except Exception as e:
                 logging.warning("Failed to load evidence %s: %s", ef, e)
-        # Detect completed sections
+
+        # Load previous drafts into prev_round_outputs
         sections_dir = os.path.join(project_dir, "sections")
-        completed_sections = {}
+        prev_round_outputs = {}
         if os.path.isdir(sections_dir):
             for sec_id in os.listdir(sections_dir):
                 sec_path = os.path.join(sections_dir, sec_id)
@@ -234,75 +243,87 @@ class Orchestrator:
                     md_files = glob.glob(os.path.join(sec_path, "*.md"))
                     if md_files:
                         latest_md = max(md_files, key=os.path.getmtime)
-                        completed_sections[sec_id] = latest_md
+                        try:
+                            with open(latest_md, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            prev_round_outputs[sec_id] = {
+                                "section": {"id": sec_id, "title": sec_id},
+                                "draft": content,
+                                "audit": "",
+                                "critical": "",
+                                "score": {"overall": 6.0, "improvements": ["resume refinement"]}
+                            }
+                        except Exception as e:
+                            logging.warning("Failed to load completed section %s: %s", sec_id, e)
+
         logging.info("[Resume] Loaded plan with %d sections", len(plan.get("sections", [])))
         logging.info("[Resume] Loaded %d evidence files", len(cumulative_sources))
-        logging.info("[Resume] Detected %d completed sections", len(completed_sections))
-        iteration_history = []
+        logging.info("[Resume] Detected %d sections with previous drafts", len(prev_round_outputs))
+
         prev_total = self.tokens.total
-        prev_round_outputs = {}
-        # Outer loop: resume remaining rounds
-        for round_num in range(1, self.max_rounds + 1):
+
+        # Outer loop: continue from last_round + 1
+        for round_num in range(last_round + 1, self.max_rounds + 1):
             logging.info(f"=== Resume Round {round_num} start ===")
-            # Skip sections already completed
-            pending_sections = [
-                s for s in plan["sections"]
-                if s["id"] not in completed_sections
-            ]
-            # if not pending_sections:
-                # logging.info("[Resume] All sections already completed.")
-                # break
-            if not pending_sections:
-                logging.info("[Resume] All sections already completed.")
-                section_outputs = []
-                for sec_id, md_path in completed_sections.items():
-                    try:
-                        with open(md_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                        section_outputs.append({
-                            "section": {"id": sec_id, "title": sec_id},
-                            "draft": content,   # <-- integrator needs this
-                            "score": {"overall": 8.0, "improvements": []}
-                        })
-                    except Exception as e:
-                        logging.warning("Failed to load completed section %s: %s", sec_id, e)
 
-                if section_outputs:
-                    iteration_history.append({
-                        "round": 0,
-                        "avg_overall": sum(o["score"]["overall"] for o in section_outputs) / len(section_outputs),
-                        "tokens_used": 0,
-                        "tokens_total": self.tokens.total,
-                        "sections": section_outputs
-                    })
-                break
-
-            # Collect fresh evidence if needed
-            fresh_sources = self.collector.collect(plan.get("query", ""), deep_visit=True, local_dir=self.local_evidence_dir )
+            # Collect fresh evidence
+            fresh_sources = self.collector.collect(
+                plan.get("query", ""),
+                deep_visit=True,
+                local_dir=self.local_evidence_dir
+            )
             evidence_paths = save_evidence(project_dir, fresh_sources)
-            section_outputs = run_sections( plan.get("query", ""), pending_sections, project_dir, round_num, fresh_sources, prev_round_outputs,
-                self.language_hint, self.max_tokens,
-                self.fulfillment,   self.critical,
-                self.supervisor,    self.editor,
-                self.auditor,       self.specialist, self.researcher )
+
+            # Run all sections, using prev_round_outputs for refinement
+            section_outputs = run_sections(
+                plan.get("query", ""),
+                plan["sections"],
+                project_dir,
+                round_num,
+                fresh_sources,
+                prev_round_outputs,
+                self.language_hint,
+                self.max_tokens,
+                self.fulfillment,
+                self.critical,
+                self.supervisor,
+                self.editor,
+                self.auditor,
+                self.specialist,
+                self.researcher
+            )
+
             prev_round_outputs.update({o["section"]["id"]: o for o in section_outputs})
+
             round_tokens = self.tokens.total - prev_total
             avg_overall = sum(o["score"].get("overall", 0.0) for o in section_outputs) / max(1, len(section_outputs))
             total_improvements = sum(len(o["score"].get("improvements", [])) for o in section_outputs)
             logging.info(f"[Resume Round {round_num}] avg_overall={avg_overall:.2f}, improvements={total_improvements}, tokens_used={round_tokens}")
             prev_total = self.tokens.total
-            iteration_history.append({ "round": round_num, "avg_overall": avg_overall, "tokens_used": round_tokens, "tokens_total": self.tokens.total, "sections": section_outputs })
-            # if avg_overall >= 8.0 and total_improvements == 0:
+
+            iteration_history.append({
+                "round": round_num,
+                "avg_overall": avg_overall,
+                "tokens_used": round_tokens,
+                "tokens_total": self.tokens.total,
+                "sections": section_outputs
+            })
+
+            # Stop if threshold met
             if avg_overall >= 8.0:
                 break
 
         # Final integration
         if iteration_history:
             executive_summary = self.integrator.write_summary(
-                iteration_history[-1]["sections"], self.language_hint, max_tokens=self.max_tokens )
+                iteration_history[-1]["sections"], self.language_hint, max_tokens=self.max_tokens
+            )
             draft_final_report = self.integrator.integrate(
-                iteration_history[-1]["sections"], executive_summary, self.language_hint, max_tokens=self.max_tokens )
-            final_report = self.Finalizer.polish_report(draft_final_report, self.language_hint, max_tokens=self.max_tokens)
+                iteration_history[-1]["sections"], executive_summary, self.language_hint, max_tokens=self.max_tokens
+            )
+            final_report = self.Finalizer.polish_report(
+                draft_final_report, self.language_hint, max_tokens=self.max_tokens
+            )
             report_path = os.path.abspath(os.path.join(project_dir, "final_report.md"))
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(final_report)
@@ -311,7 +332,10 @@ class Orchestrator:
             print("Final professional report saved at:", report_path)
         else:
             logging.warning("[Resume] No iteration history; skipping final_report.md")
-        return { "project_id": os.path.basename(project_dir),
-                 "final_report_path": os.path.join(project_dir, "final_report.md"),
-                 "iteration_history": iteration_history,
-                 "token_summary": {"total": self.tokens.total, "by_role": self.tokens.role_usage} }
+
+        return {
+            "project_id": os.path.basename(project_dir),
+            "final_report_path": os.path.join(project_dir, "final_report.md"),
+            "iteration_history": iteration_history,
+            "token_summary": {"total": self.tokens.total, "by_role": self.tokens.role_usage}
+        }
