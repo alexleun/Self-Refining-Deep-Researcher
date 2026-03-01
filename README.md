@@ -96,15 +96,3 @@ python resume.py --project negative_arctic_oscillation_20260124_183224 --lang "T
 - `evidence/*.json` — raw evidence with provenance metadata.
 
 ---
-
-## 🛠️ Roadmap
-- [ ] Add Researcher role for deep evidence.
-- [x] Support wiki‑style report formatting.
-- [ ] Enhance resume to continue missing rounds seamlessly.
-- [ ] Add provenance mapping (claims → sources).
-- [x] Expand auditor scoring schema.
-
----
-
-
-Would you like me to also draft that **ARCHITECTURE.md** file, summarizing the internal design (roles, orchestrator, resume logic) so contributors have a deeper technical reference separate from the README?
