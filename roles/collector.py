@@ -1,15 +1,12 @@
-import os, uuid, logging, requests
-from utils.helpers import safe_name, file_hash
+import os, uuid, logging, requests, json
+from utils.helpers import file_hash
 from roles.llm_interface import LLMInterface
 from utils.pdf_handler import fetch_and_split_pdf
-from utils.helpers import sanitize_filename
-from utils.helpers import file_hash
 from utils.config import ROLE_PROMPTS
-import logging
 
 class Collector:
-    def __init__(self, search_engine, project_id, limit, llm):
-        self.search_engine = search_engine
+    def __init__(self, search_engine, project_id, limit, llm: LLMInterface):
+        self.search_engine = search_engine   # must expose .search(query, limit=...)
         self.project_id = project_id
         self.llm = llm
         self.limit = limit
@@ -24,29 +21,6 @@ class Collector:
             f"{snippet}"
         )
         return self.llm.query(prompt, role="collector", max_tokens=max_tokens).strip()
-
-    def searx_search(self, query: str, limit: int = 15):
-        # params = {"q": query, "format": "json", "categories": "general", "language": "en"}
-        params = {"q": query, "format": "json", "categories": "general", "limit": limit}
-        # logging.info(f"[serx_search] {params}")
-        try:
-            resp = requests.get("http://localhost:8888/search", params=params, timeout=15)
-            data = resp.json()
-        except Exception as e:
-            logging.error(f"SearXNG search failed: {e}")
-            return []
-        out = []
-        for item in data.get("results", [])[:limit]:
-            out.append({
-                "source_id": str(uuid.uuid4()),
-                "title": item.get("title", "Untitled"),
-                "url": item.get("url", ""),
-                "snippet": item.get("content", "") or "",
-                "date": item.get("publishedDate", ""),
-                "engine": (item.get("engines") or ["general"])[0],
-                "origin": "web-search",
-            })
-        return out
 
     def fetch_deep(self, url: str, max_chars: int = 4000) -> str:
         try:
@@ -77,10 +51,45 @@ class Collector:
                     except Exception as e:
                         logging.warning(f"Failed to ingest local file: {path} :: {e}")
         return docs
-        
-    def collect(self, user_query: str, limit=15, deep_visit=True, local_dir=None, max_tokens=None, researcher=None, min_required=10):
+
+    def _filter_results_with_llm(self, query, results, max_tokens=256):
+        """Use LLM to decide if each search result is relevant to the query."""
+        filtered = []
+        for r in results:
+            prompt = f"""
+You are a relevance filter for search results.
+
+User query: {query}
+
+Candidate result:
+Title: {r.get('title','')}
+Snippet: {r.get('snippet','')}
+URL: {r.get('url','')}
+
+Decide if this result is directly useful for answering the query.
+Return STRICT JSON only:
+{{ "relevant": true/false, "reason": "short explanation" }}
+"""
+            raw = self.llm.query(prompt, role="collector", max_tokens=max_tokens)
+            try:
+                parsed = json.loads(raw)
+                if parsed.get("relevant", False):
+                    r["filter_reason"] = parsed.get("reason", "")
+                    filtered.append(r)
+            except Exception:
+                # fallback heuristic
+                if any(w.lower() in (r.get("snippet","")+r.get("title","")).lower() for w in query.split()):
+                    r["filter_reason"] = "Fallback keyword match"
+                    filtered.append(r)
+        return filtered
+
+    def collect(self, user_query: str, limit=15, deep_visit=True, local_dir=None,
+                max_tokens=None, researcher=None, min_required=10):
         limit = min(self.limit, limit)
-        results = self.searx_search(user_query, limit)
+        results = self.search_engine.search(user_query, limit=limit)
+
+        # 🔑 LLM relevance filter
+        results = self._filter_results_with_llm(user_query, results, max_tokens=max_tokens)
 
         enriched = []
         seen_hashes = set()
@@ -98,7 +107,7 @@ class Collector:
                 continue
 
             if deep_visit and url:
-                text = self.search_engine.fetch_deep(url)
+                text = self.fetch_deep(url)
                 if text:
                     snippet = text[:1200]
                     r["snippet"] = snippet
@@ -117,7 +126,8 @@ class Collector:
         # ✅ Adaptive re-query if too few items
         if len(enriched) < min_required:
             logging.info(f"[Collector] Evidence count low ({len(enriched)}). Broadening search...")
-            extra_results = self.searx_search(user_query + " overview", limit=20)
+            extra_results = self.search_engine.search(user_query + " overview", limit=20)
+            extra_results = self._filter_results_with_llm(user_query, extra_results, max_tokens=max_tokens)
             for r in extra_results:
                 if r.get("snippet"):
                     r["compressed"] = r["snippet"][:800]
@@ -140,4 +150,3 @@ class Collector:
             enriched.extend(self.ingest_local_files(local_dir))
 
         return enriched
-

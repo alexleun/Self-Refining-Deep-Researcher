@@ -3,7 +3,7 @@
 class LLMConfig:
     max_tokens = 131072
     timeout = 60
-    api_key = "sk-lm-wwC9WEfQ:62DpAHysKwAijvWAqHgK"  # <- your api key here
+    api_key = "sk-lm-wwC9"  # <- your api key here
     model = "openai/gpt-oss-20b"
     def __init__(self, max_tokens: int = 131072, timeout: int = 1200):
         self.max_tokens = max_tokens
