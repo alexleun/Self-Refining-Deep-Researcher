@@ -126,7 +126,7 @@ class Orchestrator:
         if iteration_history:
             # ✅ pick the round with the highest avg_overall
             best_round = max(iteration_history, key=lambda r: r["avg_overall"])
-            logging.info(f"[Integration] Using round {best_round['round']} with avg_overall={best_round['avg_overall']:.2f}")
+            logging.info(f"[orchestrator.run] max_rounds={self.max_rounds}, Using round {best_round['round']} with avg_overall={best_round['avg_overall']:.2f}")
             executive_summary = self.integrator.write_summary( best_round["sections"], self.language_hint, max_tokens=self.max_tokens )
             with open(os.path.join(project_id, "executive_summary.md"), "w", encoding="utf-8") as f:
                 f.write(executive_summary)
