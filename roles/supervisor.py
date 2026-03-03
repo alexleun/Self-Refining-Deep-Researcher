@@ -32,14 +32,16 @@
             
 import logging
 import json
+from utils.llm_interface import LLMInterface
 
 class Supervisor:
-    def __init__(self, threshold=7.0, max_rounds=3):
+    def __init__(self, llm: LLMInterface, threshold=7.0, max_rounds=3):
         """
         Supervisor orchestrates evaluation rounds.
         - threshold: minimum avg_overall score required to finalize
         - max_rounds: maximum number of refinement rounds allowed
         """
+        self.llm = llm
         self.threshold = threshold
         self.max_rounds = max_rounds
         self.last_avg_score = None  # store last computed average score
@@ -64,28 +66,49 @@ class Supervisor:
             logging.error(f"[Supervisor] Failed to parse JSON: {e}")
             return {"score": default_score, "comments": "Parse error"}
 
-    def score(self, enriched_text, max_tokens=256):
-        """
-        Score a section draft using LLM.
-        Returns dict with 'score' and 'comments'.
-        """
-        # Build scoring prompt
-        prompt = f"""
-You are the Supervisor. Evaluate the following section draft.
+    # def score(self, enriched_text, max_tokens=256):
+        # """
+        # Score a section draft using LLM.
+        # Returns dict with 'score' and 'comments'.
+        # """
+        # # Build scoring prompt
+        # prompt = f"""
+# You are the Supervisor. Evaluate the following section draft.
 
-Draft:
-{enriched_text}
+# Draft:
+# {enriched_text}
 
-Return STRICT JSON only:
-{{ "score": <number between 1-10>, "comments": "<short explanation>" }}
-"""
+# Return STRICT JSON only:
+# {{ "score": <number between 1-10>, "comments": "<short explanation>" }}
+# """
+        # try:
+            # raw_output = self.llm.query(prompt, role="supervisor", max_tokens=max_tokens)
+        # except Exception as e:
+            # logging.error(f"[Supervisor] LLM scoring failed: {e}")
+            # return {"score": 5, "comments": "LLM scoring failed"}
+
+        # return self.parse_json_safe(raw_output, default_score=5)
+        
+    def score(self, draft: str, max_tokens=None) -> dict:
+        prompt = ROLE_PROMPTS['supervisor'] + draft
+        raw = self.llm.query(prompt, role="supervisor", max_tokens=max_tokens or self.max_tokens)
+
         try:
-            raw_output = self.llm.query(prompt, role="supervisor", max_tokens=max_tokens)
+            result = json.loads(raw)
+            # ✅ If rewrite is provided, override draft
+            if "rewrite" in result and result["rewrite"]:
+                result["final_answer"] = result["rewrite"]
+            else:
+                result["final_answer"] = draft
+            return result
         except Exception as e:
-            logging.error(f"[Supervisor] LLM scoring failed: {e}")
-            return {"score": 5, "comments": "LLM scoring failed"}
-
-        return self.parse_json_safe(raw_output, default_score=5)
+            logging.error(f"[Supervisor] Failed to parse JSON: {e}")
+            return {
+                "accuracy": 0, "coherence": 0, "completeness": 0,
+                "creativity": 0, "format": 0, "overall": 0.0,
+                "strengths": [], "weaknesses": [], "improvements": [],
+                "final_answer": draft
+            }
 
     def evaluate_round(self, section_results):
         """
