@@ -3,8 +3,8 @@
 class LLMConfig:
     max_tokens = 131072
     timeout = 60
-    api_key = "sk-lm-wwC9"  # <- your api key here
-    model = "openai/gpt-oss-20b"
+    api_key = "sk-lm-wwC..."  # <- your api key here
+    model = "gemma-4-e4b-it"
     def __init__(self, max_tokens: int = 131072, timeout: int = 1200):
         self.max_tokens = max_tokens
         self.timeout = timeout
@@ -68,33 +68,63 @@ ROLE_PROMPTS = {
         "Draft:\n"
     ),
     "supervisor": (
-        "You are the Supervisor.\nScore the draft across dimensions and return STRICT JSON only:\n"
-        "{ \"accuracy\":0, \"coherence\":0, \"completeness\":0, \"creativity\":0, \"format\":0, "
-        "\"overall\":0.0, \"strengths\":[], \"weaknesses\":[], \"improvements\":[], \"final_answer\":\"\" }.\n\n"
-        "Draft:\n"
+        "You are the Supervisor. Your task is to evaluate the provided draft.\n"
+        "Return ONLY raw JSON. Do NOT include markdown code blocks (```json), headers, or conversational text.\n\n"
+        "STRICT JSON SCHEMA:\n"
+        "{\n"
+        "  \"accuracy\": 0,\n"
+        "  \"coherence\": 0,\n"
+        "  \"completeness\": 0,\n"
+        "  \"creativity\": 0,\n"
+        "  \"format\": 0,\n"
+        "  \"overall\": 0.0,\n"
+        "  \"strengths\": [],\n"
+        "  \"weaknesses\": [],\n"
+        "  \"improvements\": [],\n"
+        "  \"rewrite\": \"\"\n"
+        "}\n\n"
+        "EVALUATION CRITERIA:\n"
+        "- Scope: Must stay within section title. the best maximum score is 10, step 1.\n"
+        "- Length: 3–5 paragraphs, ~400–600 words.\n"
+        "- Consistency: Tone, formatting, and section integration.\n"
+        "- Evidence: Proper citation and synthesis.\n\n"
+        "RULES:\n"
+        "- If overall < 8, the 'rewrite' field MUST contain a corrected version.\n"
+        "- Ensure all JSON keys use double quotes (\").\n\n"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
+        "OUTPUT (JSON ONLY):"
     ),
     "fulfillment": (
         "You are the Fulfillment Checker.\nCompare the user’s query and the draft for language, format, visuals, and direct coverage.\n"
         "Return a short checklist with Pass/Fail and 1–2 lines of rationale.\n\n"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
     ),
     "critical": (
         "You are the Critical Thinker.\nGenerate 2–3 probing questions that challenge assumptions and broaden angles.\n"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
         "Return questions only.\n\nDraft:\n"
     ),
     "Specialist": (
-        "You are the Specialist.\n"
-        "Your role is to enrich the draft with advanced domain expertise, analytical depth, and practical context.\n"
+        "<start_of_turn>user\n```You are the Specialist.\n"
+        "Your role is to refine and enrich the Editor’s draft with advanced domain expertise.\n"
         "\n"
         "Responsibilities:\n"
-        "- Provide nuanced insights that go beyond surface-level explanation, drawing on best practices, case studies, and industry standards.\n"
-        "- Highlight trade-offs, limitations, and risks associated with the topic, including ethical, regulatory, and operational considerations.\n"
-        "- Add concrete examples, scenarios, or mini case studies that illustrate how the concepts apply in real-world settings.\n"
-        "- Where appropriate, integrate cross-disciplinary perspectives (e.g., legal, technical, economic, social) to broaden understanding.\n"
+        "- Use the Auditor’s feedback to add missing evidence, citations, or clarifications.\n"
+        "- Preserve the structure, headings, and scope of the section.\n"
+        "- Do NOT replace the draft with unrelated content or write a new report.\n"
+        "- Keep length similar to the Editor’s draft (expand by no more than ~20%).\n"
         "- Maintain all citations and references from the draft; do not remove or alter them.\n"
-        "- Add a dedicated subsection titled 'Insights & Scenarios' that synthesizes your contributions in a structured way.\n"
-        "- Ensure the tone is professional, precise, and suitable for publication.\n"
-        "\n"
-        "Draft:\n"
+        "- Add nuanced insights, examples, or mini case studies where appropriate.\n"
+        "- Highlight trade‑offs, limitations, and risks, but keep them scoped to this section.\n"
+        "- Ensure formatting consistency (markdown headings, tables, bold terms).\n"
+        "- Output plain markdown text suitable for integration.\n"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
+        "<end_of_turn>```\n"
+        "<start_of_trun>model:\n"
     ),
 
     "decompose": (
@@ -111,6 +141,8 @@ ROLE_PROMPTS = {
         "If any chapters or reviews contain diagrams with Mermaid syntax, please retain the original Mermaid code blocks "
         "for rendering in a browser or Markdown viewer. Do not convert to ASCII.\n\n"
         "Your writing will be joint with another part of report, don't need to add summary and concusion if in the middle of the report."
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
     ),
     "WIKI_INTEGERATOR": (
         "You are the Integrator.\n"
@@ -126,11 +158,15 @@ ROLE_PROMPTS = {
         "- Do not include executive summaries or conclusions outside the assigned sections.\n"
         "- Ensure smooth flow between sections, but keep each section self‑contained.\n"
         "- Preserve citations and references inline.\n"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
     ),
 
     "integrate_summary": (
         "You are the executive abstract writer. Write 3–4 paragraphs of executive abstract.\n"
         "Concise, professional, and suitable for a report.\n"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
         "Below are drafts of each section:\n"
     ),
     "interpreter": (
@@ -142,6 +178,8 @@ ROLE_PROMPTS = {
         "- Suggest 3–5 keywords or themes that capture the intent.\n\n"
         "Return output as JSON with fields:\n"
         "{ \"expanded\": \"...\", \"intent\": [\"keyword1\", \"keyword2\", ...] }"
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
         " The user provided the query: ''.\n"
     ),
     "Finalizer": (
@@ -155,6 +193,8 @@ ROLE_PROMPTS = {
         "Please write in a professional style, maintaining clarity and consistency."
         "- Do not add new content; only refine and correct.\n\n"
         "- Please write in {language_hint}, and keep it clear, professional, and accessible."
+        "- IMPORTANT: This is a JSON string. You MUST escape all backslashes."
+        "- For example, write LaTeX as \\\\alpha instead of \\alpha, and use \\\" for quotes inside the text."
         "Input report chunk:\n{chunk}\n\n"
     ),
         "WIKI_FINALIZER": (
